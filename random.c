@@ -4,9 +4,10 @@
 #include <math.h>
 
 // 配置参数
-#define TOTAL 100000    // 总随机数样本量
-#define N       50      // 生成 0 ~ N-1
-#define MAX_GAP 1000    // 重复间隔最大统计值
+#define TOTAL 5000000    // 总随机数样本量
+#define N       4095      // 生成 0 ~ N-1
+#define MAX_GAP 20    // 重复间隔最大统计值
+#define SEED 42      // 固定随机种子，确保结果可复现
 
 // 全局数据存储
 int data[TOTAL];
@@ -16,32 +17,40 @@ int freq[N];
 void generate_data() {
     for (int i = 0; i < TOTAL; i++) {
         data[i] = rand() % N;
+        // printf("生成随机数：%d\n", data[i]);
     }
 }
 
 // 1. 频数统计
 void test_frequency() {
-    printf("\n===== 1. 频数分布统计 =====\n");
+    printf("\n===== 1.1 频数分布统计 =====\n");
     for (int i = 0; i < N; i++) freq[i] = 0;
     for (int i = 0; i < TOTAL; i++) freq[data[i]]++;
-    for (int i = 0; i < N; i++) {
+    for (int i = 0; i < N-4000; i++) {
         printf("%d → %d 次\n", i, freq[i]);
     }
 }
 
-// 2. 概率统计
+// 2. 概率统计（新增：偏移百分比）
 void test_probability() {
-    printf("\n===== 2. 概率分布统计 =====\n");
+    printf("\n===== 1.2 概率分布统计 =====\n");
     double ideal = 1.0 / N;
     printf("理想概率：%.6f\n", ideal);
     for (int i = 0; i < N; i++) {
-        printf("%d → %.6f\n", i, (double)freq[i] / TOTAL);
+        double real_p = (double)freq[i] / TOTAL;
+        // 计算偏移百分比：(实际概率 - 理想概率) / 理想概率 * 100%
+        double offset_percent = (real_p - ideal) / ideal * 100.0;
+        
+        if (fabs(offset_percent) > 11.0) {  // 只显示偏移超过11%的数值
+            printf("%d: %.6f | 偏移: %+.2f%%\n", 
+                   i, real_p, offset_percent);
+        }
     }
 }
 
 // 3. 重复间隔分布
 void test_repeat_gap() {
-    printf("\n===== 3. 重复间隔分布 =====\n");
+    printf("\n===== 2. 重复间隔分布 =====\n");
     int last[N];
     int gap_count[MAX_GAP] = {0};
     for (int i = 0; i < N; i++) last[i] = -1;
@@ -63,7 +72,7 @@ void test_repeat_gap() {
 
 // 4. 卡方检验
 void test_chi_square() {
-    printf("\n===== 4. 卡方均匀性检验 =====\n");
+    printf("\n===== 3. 卡方均匀性检验 =====\n");
     double expect = (double)TOTAL / N;
     double chi = 0;
     for (int i = 0; i < N; i++) {
@@ -75,28 +84,30 @@ void test_chi_square() {
 
 // 5. 游程检验
 void test_runs() {
-    printf("\n===== 5. 游程检验 =====\n");
+    printf("\n===== 4. 游程检验 =====\n");
     int runs = 1;
+    float mean = (N - 1) / 2.0;
+    printf("均值：%.2f\n", mean);
     for (int i = 1; i < TOTAL; i++) {
-        if ((data[i] > data[i-1]) != (data[i-1] > data[i-2])) {
+        if ((data[i] > mean)&&(data[i-1] < mean)||(data[i] < mean)&&(data[i-1] > mean)) {
             runs++;
         }
     }
-    double expect_runs = (2.0 * TOTAL - 1) / 3.0;
+    double expect_runs = TOTAL / 2.0;
     printf("实际游程：%d\n", runs);
     printf("理论游程：%.2f（越接近越随机）\n", expect_runs);
 }
 
 // 6. 均值方差检验
 void test_mean_variance() {
-    printf("\n===== 6. 均值方差检验 =====\n");
+    printf("\n===== 5. 均值方差检验 =====\n");
     double sum = 0, sum2 = 0;
     for (int i = 0; i < TOTAL; i++) {
         sum += data[i];
         sum2 += data[i] * data[i];
     }
     double mean = sum / TOTAL;
-    double var = sum2 / TOTAL - mean * mean;
+    double var = (sum2 / TOTAL) - (mean * mean);
 
     double ideal_mean = (N - 1) / 2.0;
     double ideal_var = (N * N - 1) / 12.0;
@@ -107,7 +118,7 @@ void test_mean_variance() {
 
 // 7. 自相关系数检验
 void test_autocorr() {
-    printf("\n===== 7. 1阶自相关检验 =====\n");
+    printf("\n===== 6. 1阶自相关检验 =====\n");
     double mean = 0;
     for (int i = 0; i < TOTAL; i++) mean += data[i];
     mean /= TOTAL;
@@ -122,7 +133,7 @@ void test_autocorr() {
 }
 
 int main() {
-    srand((unsigned)time(NULL));
+    srand(SEED);
     generate_data();
 
     test_frequency();
@@ -133,6 +144,6 @@ int main() {
     test_mean_variance();
     test_autocorr();
 
-    printf("\n✅ 7 项测评全部完成！\n");
+    printf("\n✅ 6 项测评全部完成！\n");
     return 0;
 }
