@@ -14,12 +14,10 @@
 //全局数据
 int data[TOTAL];
 int freq[N];
-// double normal_data[TOTAL]; // 存储生成的正态分布随机数
 
 void generate_uniform_basic() {
     for (int i = 0; i < TOTAL; i++) {
         data[i] = rand() % N;
-        // printf("生成随机数：%d\n", data[i]);
     }
 }
 
@@ -75,7 +73,6 @@ void generate_normal_int() {
         } while (candidate < 0 || candidate >= N);  // 拒绝超出范围的样本
 
         data[i] = candidate;
-        // printf("生成正态分布整数：%d\n", data[i]);
     }
 }
 
@@ -95,7 +92,7 @@ void test_probability() {
     for (int i = 0; i < N; i++) {
         double real_p = (double)freq[i] / TOTAL;
         double offset_percent = ((real_p - ideal) / ideal) * 100.0;
-        if (fabs(offset_percent) > 0.0) {  // 只显示偏移超过11%的数值
+        if (fabs(offset_percent) > 11.0) {  // 只显示偏移超过11%的数值
             printf("%d: %.6f | 偏移: %+.2f%%\n", 
                    i, real_p, offset_percent);
         }
@@ -159,11 +156,11 @@ void test_chi_square_normal() {
         double z_low = (i - 0.5 - mean) / stddev;   // 区间左端点z-score
         double z_high = (i + 0.5 - mean) / stddev;  // 区间右端点z-score
         double p_original = normal_cdf(z_high) - normal_cdf(z_low);  // 原始概率
-        double p_normalized = p_original / p_total;  // 归一化概率（关键修正！）
+        double p_normalized = p_original / p_total;  // 归一化概率
         expect[i] = p_normalized * TOTAL;  // 归一化后的理论频数
     }
 
-    // 步骤3：合并理论频数 <5 的相邻组（逻辑同前）
+    // 步骤3：合并理论频数 <5 的相邻组
     double chi = 0.0;
     int num_groups = 0;
     int k = 0;
@@ -188,7 +185,7 @@ void test_chi_square_normal() {
     }
 
     // 步骤4：输出结果
-    int df = num_groups - 2 - 1;  // 自由度计算不变
+    int df = num_groups - 2 - 1;
     printf("截断区间：[%.1f, %.1f]，截断总概率：%.4f\n", trunc_low, trunc_high, p_total);
     printf("正态分布参数：均值=%.2f，标准差=%.2f\n", mean, stddev);
     printf("合并后组数：%d，自由度：%d\n", num_groups, df);
