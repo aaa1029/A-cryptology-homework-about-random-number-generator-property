@@ -3,9 +3,33 @@
 #include <time.h>
 #include <math.h>
 
-//config
-#define TOTAL   5000000 // 总随机数样本量
-#define N       10    // 生成 0 ~ N-1
+// ==================== 模式选择 ====================
+// 1: 从 NIST SP 800-22 数据文件读取,  0: 使用 rand() 生成
+#define USE_NIST_FILE  1
+
+// ==================== NIST 文件模式配置 ====================
+#if USE_NIST_FILE
+    #define K_BITS            6      // 分组位数, N = 2^K_BITS (建议: 1,2,4,8)
+    #define N                 (1 << K_BITS)
+
+    // NIST SP 800-22 数据文件格式 (如 data.pi, data.e, data.sha 等)
+    #define NIST_LINE1_BITS     24
+    #define NIST_LINE2_BITS     25
+    #define NIST_LINE2_COUNT    40194   // 第2行~第40195行
+    #define NIST_LASTLINE_BITS  8
+    #define NIST_TOTAL_BITS     (NIST_LINE1_BITS + NIST_LINE2_COUNT * NIST_LINE2_BITS + NIST_LASTLINE_BITS)
+                                  // = 24 + 40194*25 + 8 = 1,004,882 bits
+    #define TOTAL               (NIST_TOTAL_BITS / K_BITS)  // 整数除法自动丢弃余数
+    #define NIST_FILENAME       "data.pi"  // 修改为你要测试的文件名
+#endif
+
+// ==================== 生成模式配置 ====================
+#if !USE_NIST_FILE
+    #define TOTAL   5000000 // 总随机数样本量
+    #define N       4095      // 生成 0 ~ N-1
+#endif
+
+// ==================== 通用配置 ====================
 #define MAX_GAP 20      // 重复间隔最大统计值
 #define SEED    42     
 
@@ -76,6 +100,65 @@ void generate_normal_int() {
     }
 }
 
+// ==================== NIST SP 800-22 文件读取 ====================
+// 从 NIST 格式文件读取 01 串，每 K_BITS 位映射为 [0, N-1] 整数
+// 文件格式: 每行是连续的 '0'/'1' 字符，行长度分别为 24, 25, ..., 8
+#if USE_NIST_FILE
+int load_nist_file(const char *filename) {
+    FILE *fp = fopen(filename, "r");
+    if (!fp) {
+        printf("错误: 无法打开文件 '%s'\n", filename);
+        return -1;
+    }
+
+    int buf = 0;         // 当前累积的 bit 缓冲区
+    int bit_count = 0;   // buf 中已有的 bit 数
+    int sample_idx = 0;
+    char line[32];       // 每行最多 25 位 + 换行符
+
+    // 各行的预期长度（用于校验）
+    int expected_lens[] = {NIST_LINE1_BITS};  // 第1行
+    int line_idx = 0;
+
+    while (fgets(line, sizeof(line), fp) && sample_idx < TOTAL) {
+        // 跳过空行
+        if (line[0] == '\n' || line[0] == '\r') continue;
+
+        // 统计本行 bit 数
+        int line_bits = 0;
+        for (char *p = line; *p && *p != '\n' && *p != '\r'; p++) {
+            if (*p == '0' || *p == '1') {
+                buf = (buf << 1) | (*p - '0');
+                bit_count++;
+                line_bits++;
+
+                if (bit_count == K_BITS) {
+                    data[sample_idx++] = buf;
+                    buf = 0;
+                    bit_count = 0;
+                }
+            }
+        }
+
+        line_idx++;
+    }
+
+    fclose(fp);
+
+    printf("\n========== NIST 文件加载 ==========\n");
+    printf("文件: %s\n", filename);
+    printf("分组位数 k = %d,  N = %d\n", K_BITS, N);
+    printf("读取行数: %d,  总比特数: %d\n", line_idx, NIST_TOTAL_BITS);
+    printf("生成样本数: %d (理论: %d)\n", sample_idx, TOTAL);
+    if (bit_count > 0) {
+        printf("丢弃剩余 %d bit (不足 K_BITS=%d 位)\n", bit_count, K_BITS);
+    }
+    printf("===================================\n\n");
+
+    return sample_idx;
+}
+#endif
+
 void test_frequency() {
     // printf("\n1.1 频数分布统计\n");
     for (int i = 0; i < N; i++) freq[i] = 0;
@@ -89,14 +172,39 @@ void test_probability() {
     printf("\n1 概率分布统计\n");
     double ideal = 1.0 / N;
     printf("理想概率：%.6f\n", ideal);
+
+    int max_abs_idx = 0, min_abs_idx = 0;
+    double max_abs_offset = 0.0, min_abs_offset = 1e9;
+
     for (int i = 0; i < N; i++) {
         double real_p = (double)freq[i] / TOTAL;
         double offset_percent = ((real_p - ideal) / ideal) * 100.0;
-        if (fabs(offset_percent) > 11.0) {  // 只显示偏移超过11%的数值
+        double abs_off = fabs(offset_percent);
+
+        // 跟踪绝对值最大
+        if (abs_off > max_abs_offset) {
+            max_abs_offset = abs_off;
+            max_abs_idx = i;
+        }
+        // 跟踪绝对值最小
+        if (abs_off < min_abs_offset) {
+            min_abs_offset = abs_off;
+            min_abs_idx = i;
+        }
+
+        if (fabs(offset_percent) > 10.0) {  // 只显示偏移超过0%的数值
             printf("%d: %.6f | 偏移: %+.2f%%\n", 
                    i, real_p, offset_percent);
         }
     }
+
+    printf("--- 绝对值偏差极值 ---\n");
+    printf("绝对值最大: %d -> %.2f%% (偏移 %+.2f%%)\n",
+           max_abs_idx, max_abs_offset,
+           ((double)freq[max_abs_idx] / TOTAL - ideal) / ideal * 100.0);
+    printf("绝对值最小: %d -> %.2f%% (偏移 %+.2f%%)\n",
+           min_abs_idx, min_abs_offset,
+           ((double)freq[min_abs_idx] / TOTAL - ideal) / ideal * 100.0);
 }
 
 void test_repeat_gap() {
@@ -215,6 +323,7 @@ void test_runs() {
     double expect_runs = TOTAL / 2.0;
     printf("理论游程：%.2f\n", expect_runs);
     printf("实际游程：%d\n", runs);
+    printf("游程偏差：%.2f%%\n", ((runs - expect_runs) / expect_runs) * 100.0);
 }
 
 void test_mean_and_variance() {
@@ -232,8 +341,11 @@ void test_mean_and_variance() {
     double ideal_var_normal = pow((N - 1) / 6.0, 2); // 正态分布的方差
 
     printf("实际均值：%.4f | 理论：%.4f\n", mean, ideal_mean);
+    printf("偏差：%.2f%%\n", ((mean - ideal_mean) / ideal_mean) * 100.0);
     printf("实际方差：%.4f | 理论（均匀分布）：%.4f\n", var, ideal_var_uniform);
+    printf("偏差：%.2f%%\n", ((var - ideal_var_uniform) / ideal_var_uniform) * 100.0);
     printf("实际方差：%.4f | 理论（正态分布）：%.4f\n", var, ideal_var_normal);
+    printf("偏差：%.2f%%\n", ((var - ideal_var_normal) / ideal_var_normal) * 100.0);
 }
 
 void test_autocorr() {
@@ -293,8 +405,22 @@ void generate_data() {
 }
 
 int main(){
+#if USE_NIST_FILE
+    printf("===== NIST SP 800-22 随机数检验 =====\n");
+    printf("文件: %s,  K_BITS=%d,  N=%d,  TOTAL=%d\n\n",
+           NIST_FILENAME, K_BITS, N, TOTAL);
+
+    clock_t start = clock();
+    int actual = load_nist_file(NIST_FILENAME);
+    clock_t end = clock();
+    if (actual < 0) return 1;
+    printf("加载耗时: %f 秒\n", ((double)(end - start)) / CLOCKS_PER_SEC);
+
+    test_all();
+#else
     srand(SEED);
     generate_data();
     test_all();
+#endif
     return 0;
 }
